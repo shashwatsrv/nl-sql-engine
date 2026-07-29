@@ -1,5 +1,5 @@
 from openai import OpenAI
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, inspect
 from dotenv import load_dotenv
 import os
 import re
@@ -12,24 +12,28 @@ client = OpenAI(
 )
 engine = create_engine(os.getenv("DATABASE_URL"))
 
-SCHEMA = """
-Tables:
-- customers(customer_id, company_name, contact_name, country)
-- orders(order_id, customer_id, order_date, shipped_date)
-- order_details(order_id, product_id, unit_price, quantity)
-- products(product_id, product_name, unit_price, units_in_stock)
-- employees(employee_id, first_name, last_name, title)
-"""
+def get_schema() -> str:
+    inspector = inspect(engine)
+    tables = inspector.get_table_names()
+    schema_parts = []
+    for table in tables:
+        columns = inspector.get_columns(table)
+        col_defs = ", ".join(f"{c['name']} ({c['type']})" for c in columns)
+        schema_parts.append(f"- {table}({col_defs})")
+    return "Tables:\n" + "\n".join(schema_parts)
 
 def clean_sql(raw: str) -> str:
     raw = re.sub(r"```sql|```", "", raw)
     return raw.strip()
 
 def query(user_input: str) -> dict:
+    schema = get_schema()
+    print(f"Schema loaded: {len(schema)} chars\n")
+
     response = client.chat.completions.create(
         model=os.getenv("LLM_MODEL"),
         messages=[
-            {"role": "system", "content": f"You are a SQL expert. Given this schema:\n{SCHEMA}\nReturn only the SQL query, nothing else."},
+            {"role": "system", "content": f"You are a SQL expert. Given this schema:\n{schema}\nReturn only the SQL query, nothing else."},
             {"role": "user", "content": user_input}
         ]
     )
