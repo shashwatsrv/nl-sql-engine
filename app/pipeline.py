@@ -1,6 +1,7 @@
 from openai import OpenAI
-from sqlalchemy import create_engine, text, inspect
+from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
+from app.rag import retrieve_relevant_schema
 import os
 import re
 
@@ -12,23 +13,13 @@ client = OpenAI(
 )
 engine = create_engine(os.getenv("DATABASE_URL"))
 
-def get_schema() -> str:
-    inspector = inspect(engine)
-    tables = inspector.get_table_names()
-    schema_parts = []
-    for table in tables:
-        columns = inspector.get_columns(table)
-        col_defs = ", ".join(f"{c['name']} ({c['type']})" for c in columns)
-        schema_parts.append(f"- {table}({col_defs})")
-    return "Tables:\n" + "\n".join(schema_parts)
-
 def clean_sql(raw: str) -> str:
     raw = re.sub(r"```sql|```", "", raw)
     return raw.strip()
 
 def query(user_input: str) -> dict:
-    schema = get_schema()
-    print(f"Schema loaded: {len(schema)} chars\n")
+    schema = retrieve_relevant_schema(user_input)
+    print(f"Retrieved schema:\n{schema}\n")
 
     response = client.chat.completions.create(
         model=os.getenv("LLM_MODEL"),
