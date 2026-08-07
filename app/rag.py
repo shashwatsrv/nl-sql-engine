@@ -39,7 +39,7 @@ def embed_schema():
         conn.commit()
     print(f"Embedded {len(chunks)} table chunks into pgvector")
 
-def retrieve_relevant_schema(query: str, top_k: int = 3) -> str:
+def retrieve_relevant_schema(query: str, top_k: int = 6) -> str:
     query_embedding = model.encode(query).tolist()
     with engine.connect() as conn:
         results = conn.execute(text("""
