@@ -3,7 +3,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from app.rag import retrieve_relevant_schema
 from app.intent import classify_intent
-from app.validator import validate_sql
+from app.validator import validate_sql, score_confidence
 import os
 import re
 
@@ -50,8 +50,12 @@ Use PostgreSQL syntax only. Quote table/column names with double quotes if neede
             "rows": [],
             "intent": intent["intent"],
             "intent_confidence": intent["score"],
+            "confidence": 0.0,
+            "warning": None,
             "error": validation["error"]
         }
+
+    confidence = score_confidence(sql, schema, validation["valid"])
 
     with engine.connect() as conn:
         result = conn.execute(text(sql))
@@ -62,9 +66,10 @@ Use PostgreSQL syntax only. Quote table/column names with double quotes if neede
         "rows": rows,
         "intent": intent["intent"],
         "intent_confidence": intent["score"],
+        "confidence": confidence,
+        "warning": "Low confidence — verify results" if confidence < 0.5 else None,
         "error": None
     }
-
 if __name__ == "__main__":
     test_queries = [
         "show me the top 5 customers by company name",

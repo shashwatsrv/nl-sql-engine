@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from app.pipeline import query as run_query
+from openai import OpenAI
 import redis
 import hashlib
 import json
@@ -11,6 +12,11 @@ import os
 load_dotenv()
 
 app = FastAPI(title="NL SQL Engine")
+
+client = OpenAI(
+    api_key=os.getenv("LLM_API_KEY"),
+    base_url=os.getenv("LLM_BASE_URL")
+)
 
 redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 engine = create_engine(os.getenv("DATABASE_URL"))
@@ -91,6 +97,8 @@ def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
         "rows": [list(r) for r in output["rows"]],
         "intent": output["intent"],
         "intent_confidence": output["intent_confidence"],
+        "confidence": output.get("confidence", 0.0),
+        "warning": output.get("warning"),
         "error": output.get("error"),
         "cached": False
     }
@@ -131,3 +139,19 @@ def clear_history(x_api_key: str = Header(...)):
         """))
         conn.commit()
     return {"status": "old records cleared"}
+
+class ExplainRequest(BaseModel):
+    sql: str
+
+@app.post("/explain")
+def explain_endpoint(request: ExplainRequest, x_api_key: str = Header(...)):
+    verify_key(x_api_key)
+    
+    response = client.chat.completions.create(
+        model=os.getenv("LLM_MODEL"),
+        messages=[
+            {"role": "system", "content": "You are a SQL expert. Explain what the following SQL query does in plain English. Be concise — 2-3 sentences max."},
+            {"role": "user", "content": request.sql}
+        ]
+    )
+    return {"explanation": response.choices[0].message.content}

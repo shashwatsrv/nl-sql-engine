@@ -44,6 +44,41 @@ def validate_sql(sql: str) -> dict:
 
     return {"valid": True, "error": None, "referenced_tables": list(referenced_tables)}
 
+def score_confidence(sql: str, schema_retrieved: str, validation_passed: bool) -> float:
+    # Signal 1 — schema coverage
+    # how many referenced tables were in the retrieved schema
+    try:
+        parsed = sqlglot.parse_one(sql, dialect="postgres")
+        referenced = {t.name.lower() for t in parsed.find_all(sqlglot.exp.Table)}
+    except:
+        referenced = set()
+
+    retrieved_tables = set()
+    for line in schema_retrieved.split("\n"):
+        if line.startswith("- Table"):
+            table_name = line.split(" ")[2]
+            retrieved_tables.add(table_name.lower())
+
+    coverage = len(referenced & retrieved_tables) / max(len(referenced), 1)
+
+    # Signal 2 — query complexity
+    sql_upper = sql.upper()
+    join_count = sql_upper.count("JOIN")
+    subquery_count = sql_upper.count("SELECT") - 1
+
+    if join_count == 0 and subquery_count == 0:
+        complexity = 1.0
+    elif join_count <= 2 and subquery_count <= 1:
+        complexity = 0.6
+    else:
+        complexity = 0.3
+
+    # Signal 3 — validation passed
+    valid_bonus = 1.0 if validation_passed else 0.0
+
+    # Weighted average
+    score = (coverage * 0.5) + (complexity * 0.3) + (valid_bonus * 0.2)
+    return round(score, 2)
 
 if __name__ == "__main__":
     test_cases = [
@@ -59,3 +94,4 @@ if __name__ == "__main__":
         if not result['valid']:
             print(f"Error: {result['error']}")
         print()
+
