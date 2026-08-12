@@ -11,7 +11,14 @@ BLOCKED_OPERATIONS = {"DROP", "DELETE", "ALTER", "TRUNCATE", "INSERT", "UPDATE",
 
 def get_known_tables() -> set:
     inspector = inspect(engine)
-    return set(inspector.get_table_names())
+    tables = set(inspector.get_table_names())
+    # allow information_schema references for meta-questions
+    tables.update({
+        "columns", "tables", "schemata", "views",
+        "information_schema.columns", "information_schema.tables",
+        "pg_catalog.pg_tables", "pg_tables"
+    })
+    return tables
 
 def validate_sql(sql: str) -> dict:
     # Step 1 — AST parse

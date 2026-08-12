@@ -31,7 +31,8 @@ def query(user_input: str, session_id: str = "default") -> dict:
     intent = classify_intent(user_input)
     print(f"Intent: {intent['intent']} (confidence: {intent['score']})")
 
-    schema = retrieve_relevant_schema(user_input, top_k=6)
+    top_k = 14 if intent["intent"] == "ambiguous" else 6
+    schema = retrieve_relevant_schema(user_input, top_k=top_k)
     print(f"Retrieved schema:\n{schema}\n")
 
     messages = [
