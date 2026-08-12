@@ -35,6 +35,20 @@ def normalize(query: str) -> str:
 def cache_key(query: str) -> str:
     return "nlsql:" + hashlib.md5(normalize(query).encode()).hexdigest()
 
+# --- Session ---
+def get_session_history(session_id: str) -> list:
+    key = f"session:{session_id}"
+    history = redis_client.get(key)
+    return json.loads(history) if history else []
+
+def update_session_history(session_id: str, user_msg: str, assistant_msg: str):
+    key = f"session:{session_id}"
+    history = get_session_history(session_id)
+    history.append({"role": "user", "content": user_msg})
+    history.append({"role": "assistant", "content": assistant_msg})
+    history = history[-10:]
+    redis_client.setex(key, 3600, json.dumps(history))
+
 # --- History ---
 def log_history(nl_query: str, sql: str, row_count: int, error: str = None):
     with engine.connect() as conn:
@@ -57,7 +71,7 @@ def ensure_history_table():
             )
         """))
         conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_history_created_at 
+            CREATE INDEX IF NOT EXISTS idx_history_created_at
             ON query_history(created_at)
         """))
         conn.commit()
@@ -65,6 +79,10 @@ def ensure_history_table():
 # --- Models ---
 class QueryRequest(BaseModel):
     query: str
+    session_id: str = "default"
+
+class ExplainRequest(BaseModel):
+    sql: str
 
 # --- Startup ---
 @app.on_event("startup")
@@ -80,7 +98,6 @@ def health():
 def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
-    # cache check
     key = cache_key(request.query)
     cached = redis_client.get(key)
     if cached:
@@ -88,8 +105,7 @@ def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
         result["cached"] = True
         return result
 
-    # run pipeline
-    output = run_query(request.query)
+    output = run_query(request.query, session_id=request.session_id)
 
     result = {
         "query": request.query,
@@ -103,15 +119,11 @@ def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
         "cached": False
     }
 
-    # log history
-    log_history(
-        request.query,
-        output["sql"],
-        len(output["rows"]),
-        output.get("error")
-    )
+    if not output.get("error"):
+        update_session_history(request.session_id, request.query, output["sql"])
 
-    # cache if successful
+    log_history(request.query, output["sql"], len(output["rows"]), output.get("error"))
+
     if not output.get("error"):
         redis_client.setex(key, 3600, json.dumps(result))
 
@@ -134,19 +146,15 @@ def clear_history(x_api_key: str = Header(...)):
     verify_key(x_api_key)
     with engine.connect() as conn:
         conn.execute(text("""
-            DELETE FROM query_history 
+            DELETE FROM query_history
             WHERE created_at < NOW() - INTERVAL '30 days'
         """))
         conn.commit()
     return {"status": "old records cleared"}
 
-class ExplainRequest(BaseModel):
-    sql: str
-
 @app.post("/explain")
 def explain_endpoint(request: ExplainRequest, x_api_key: str = Header(...)):
     verify_key(x_api_key)
-    
     response = client.chat.completions.create(
         model=os.getenv("LLM_MODEL"),
         messages=[
