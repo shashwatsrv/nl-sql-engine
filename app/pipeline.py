@@ -53,6 +53,18 @@ Use PostgreSQL syntax only. Quote table/column names with double quotes if neede
     sql = clean_sql(response.choices[0].message.content)
     print(f"Generated SQL:\n{sql}\n")
 
+    # check if LLM returned clarification instead of SQL
+    if not sql.strip().upper().startswith(("SELECT", "WITH", "EXPLAIN")):
+        return {
+            "sql": "",
+            "rows": [],
+            "intent": intent["intent"],
+            "intent_confidence": intent["score"],
+            "confidence": 0.0,
+            "warning": None,
+            "error": "Could not generate SQL — try rephrasing your question."
+        }
+
     validation = validate_sql(sql)
     if not validation["valid"]:
         print(f"Validation failed: {validation['error']}")

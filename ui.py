@@ -10,6 +10,24 @@ st.set_page_config(page_title="NL SQL Engine", layout="wide")
 st.title("Natural Language Database Query Engine")
 st.caption("Ask questions about the Northwind database in plain English")
 
+# session initialisation 
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+#sidebar
+with st.sidebar:
+    st.header("Session")
+    st.caption(f"Session ID: {st.session_state.session_id[:8]}...")
+    if st.button("New conversation"):
+        st.session_state.session_id = str(uuid.uuid4())
+        st.session_state.messages = []
+        st.rerun()
+
+
+
 # session id per browser session
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
