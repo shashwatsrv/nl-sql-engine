@@ -26,6 +26,10 @@ with st.sidebar:
         st.session_state.messages = []
         st.rerun()
 
+    st.divider()
+    st.header("Model")
+    mode = st.radio("Inference mode", ["Local (Ollama)", "Cloud (Groq)"], index=0)
+    st.session_state.inference_mode = "ollama" if mode == "Local (Ollama)" else "groq"
 
 
 # session id per browser session
@@ -64,7 +68,11 @@ if prompt := st.chat_input("Ask a question about the data..."):
                 response = requests.post(
                     f"{API_URL}/query",
                     headers=HEADERS,
-                    json={"query": prompt, "session_id": st.session_state.session_id}
+                    json={
+                        "query": prompt,
+                        "session_id": st.session_state.session_id,
+                        "inference_mode": st.session_state.get("inference_mode", "ollama")
+                    }
                 )
                 data = response.json()
 

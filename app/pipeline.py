@@ -11,10 +11,21 @@ import re
 
 load_dotenv()
 
-client = OpenAI(
+GROQ_CLIENT = OpenAI(
     api_key=os.getenv("LLM_API_KEY"),
     base_url=os.getenv("LLM_BASE_URL")
 )
+
+OLLAMA_CLIENT = OpenAI(
+    api_key="ollama",
+    base_url="http://localhost:11434/v1"
+)
+
+MODELS = {
+    "ollama": (OLLAMA_CLIENT, "qwen2.5-coder:7b"),
+    "groq": (GROQ_CLIENT, os.getenv("LLM_MODEL_GROQ", "llama-3.3-70b-versatile"))
+}
+
 engine = create_engine(os.getenv("DATABASE_URL"))
 redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 
@@ -23,7 +34,9 @@ def clean_sql(raw: str) -> str:
     raw = raw.replace("`", '"')
     return raw.strip()
 
-def query(user_input: str, session_id: str = "default") -> dict:
+def query(user_input: str, session_id: str = "default", inference_mode: str = "ollama") -> dict:
+    client, model = MODELS[inference_mode]
+
     session_key = f"session:{session_id}"
     raw_history = redis_client.get(session_key)
     history = json.loads(raw_history) if raw_history else []
@@ -47,13 +60,12 @@ Use PostgreSQL syntax only. Quote table/column names with double quotes if neede
     messages.append({"role": "user", "content": user_input})
 
     response = client.chat.completions.create(
-        model=os.getenv("LLM_MODEL"),
+        model=model,
         messages=messages
     )
     sql = clean_sql(response.choices[0].message.content)
     print(f"Generated SQL:\n{sql}\n")
 
-    # check if LLM returned clarification instead of SQL
     if not sql.strip().upper().startswith(("SELECT", "WITH", "EXPLAIN")):
         return {
             "sql": "",

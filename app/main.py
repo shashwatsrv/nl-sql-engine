@@ -80,7 +80,7 @@ def ensure_history_table():
 class QueryRequest(BaseModel):
     query: str
     session_id: str = "default"
-
+    inference_mode: str = "ollama"
 class ExplainRequest(BaseModel):
     sql: str
 
@@ -105,7 +105,7 @@ def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
         result["cached"] = True
         return result
 
-    output = run_query(request.query, session_id=request.session_id)
+    output = run_query(request.query, session_id=request.session_id, inference_mode=request.inference_mode)
 
     result = {
         "query": request.query,
