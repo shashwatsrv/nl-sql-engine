@@ -13,10 +13,6 @@ load_dotenv()
 
 app = FastAPI(title="NL SQL Engine")
 
-client = OpenAI(
-    api_key=os.getenv("LLM_API_KEY"),
-    base_url=os.getenv("LLM_BASE_URL")
-)
 
 redis_client = redis.Redis(host="localhost", port=6379, db=0, decode_responses=True)
 engine = create_engine(os.getenv("DATABASE_URL"))
@@ -83,7 +79,7 @@ class QueryRequest(BaseModel):
     inference_mode: str = "ollama"
 class ExplainRequest(BaseModel):
     sql: str
-
+    inference_mode: str = "ollama"
 # --- Startup ---
 @app.on_event("startup")
 async def startup():
@@ -155,8 +151,22 @@ def clear_history(x_api_key: str = Header(...)):
 @app.post("/explain")
 def explain_endpoint(request: ExplainRequest, x_api_key: str = Header(...)):
     verify_key(x_api_key)
-    response = client.chat.completions.create(
-        model=os.getenv("LLM_MODEL"),
+    
+    if request.inference_mode == "groq":
+        explain_client = OpenAI(
+            api_key=os.getenv("LLM_API_KEY_GROQ"),
+            base_url=os.getenv("LLM_BASE_URL_GROQ")
+        )
+        model = os.getenv("LLM_MODEL_GROQ", "llama-3.3-70b-versatile")
+    else:
+        explain_client = OpenAI(
+            api_key="ollama",
+            base_url="http://localhost:11434/v1"
+        )
+        model = "qwen2.5-coder:7b"
+
+    response = explain_client.chat.completions.create(
+        model=model,
         messages=[
             {"role": "system", "content": "You are a SQL expert. Explain what the following SQL query does in plain English. Be concise — 2-3 sentences max."},
             {"role": "user", "content": request.sql}

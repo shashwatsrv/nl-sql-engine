@@ -101,7 +101,10 @@ if prompt := st.chat_input("Ask a question about the data..."):
                     explain_resp = requests.post(
                         f"{API_URL}/explain",
                         headers=HEADERS,
-                        json={"sql": data["sql"]}
+                        json={
+                            "sql": data["sql"],
+                            "inference_mode": st.session_state.get("inference_mode", "ollama")
+                        }
                     )
                     explanation = explain_resp.json().get("explanation", "")
                     if explanation:
