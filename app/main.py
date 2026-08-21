@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
 from app.pipeline import query as run_query
 from openai import OpenAI
+from app.semantic_cache import ensure_semantic_cache_table, semantic_cache_get, semantic_cache_set
 import redis
 import hashlib
 import json
@@ -82,8 +83,10 @@ class ExplainRequest(BaseModel):
     inference_mode: str = "ollama"
 # --- Startup ---
 @app.on_event("startup")
+
 async def startup():
     ensure_history_table()
+    ensure_semantic_cache_table()
 
 # --- Endpoints ---
 @app.get("/health")
@@ -94,11 +97,20 @@ def health():
 def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
     verify_key(x_api_key)
 
+    # semantic cache check first
+    semantic_hit = semantic_cache_get(request.query)
+    if semantic_hit:
+        semantic_hit["cached"] = True
+        semantic_hit["cache_type"] = "semantic"
+        return semantic_hit
+
+    # exact cache check second
     key = cache_key(request.query)
     cached = redis_client.get(key)
     if cached:
         result = json.loads(cached)
         result["cached"] = True
+        result["cache_type"] = "exact"
         return result
 
     output = run_query(request.query, session_id=request.session_id, inference_mode=request.inference_mode)
@@ -112,11 +124,13 @@ def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
         "confidence": output.get("confidence", 0.0),
         "warning": output.get("warning"),
         "error": output.get("error"),
-        "cached": False
+        "cached": False,
+        "cache_type": None
     }
 
     if not output.get("error"):
         update_session_history(request.session_id, request.query, output["sql"])
+        semantic_cache_set(request.query, result)
 
     log_history(request.query, output["sql"], len(output["rows"]), output.get("error"))
 
@@ -124,7 +138,6 @@ def query_endpoint(request: QueryRequest, x_api_key: str = Header(...)):
         redis_client.setex(key, 3600, json.dumps(result))
 
     return result
-
 @app.get("/history")
 def history_endpoint(x_api_key: str = Header(...), limit: int = 20):
     verify_key(x_api_key)
