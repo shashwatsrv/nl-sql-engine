@@ -1,9 +1,9 @@
 import streamlit as st
 import requests
 import uuid
-
-API_URL = "http://127.0.0.1:8000"
-API_KEY = "dev-key-123"
+import os
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
+API_KEY = os.getenv("API_KEY", "dev-key-123")
 HEADERS = {"x-api-key": API_KEY}
 
 st.set_page_config(page_title="NL SQL Engine", layout="wide")
@@ -30,6 +30,9 @@ with st.sidebar:
     st.header("Model")
     mode = st.radio("Inference mode", ["Local (Ollama)", "Cloud (Groq)"], index=0)
     st.session_state.inference_mode = "ollama" if mode == "Local (Ollama)" else "groq"
+    
+    if mode == "Local (Ollama)":
+        st.caption("⚠️ Requires Ollama running locally on port 11434.")
 
 
 # session id per browser session
@@ -50,7 +53,7 @@ for msg in st.session_state.messages:
             with st.expander("Results"):
                 st.dataframe(msg["rows"])
         if "confidence" in msg:
-            st.caption(f"Confidence: {msg['confidence']} · Intent: {msg['intent']}")
+            st.caption(f"Confidence: {data['confidence']} · Intent: {data['intent']} · Cached: {data['cached']} · Cache type: {data.get('cache_type') or 'none'}")
             if msg.get("warning"):
                 st.warning(msg["warning"])
 
