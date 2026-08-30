@@ -5,8 +5,9 @@ import pandas as pd
 from app.core import run_query, explain_sql
 
 st.set_page_config(page_title="NL SQL Engine", layout="wide")
-st.title("Natural Language Database Query Engine")
+st.title("AskYourDB")
 st.caption("Connect your Postgres database and query it in plain English")
+
 
 # --- Session state ---
 if "session_id" not in st.session_state:
