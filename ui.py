@@ -1,127 +1,139 @@
 import streamlit as st
-import requests
 import uuid
 import os
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000")
-API_KEY = os.getenv("API_KEY", "dev-key-123")
-HEADERS = {"x-api-key": API_KEY}
+import pandas as pd
+from app.core import run_query, explain_sql
 
 st.set_page_config(page_title="NL SQL Engine", layout="wide")
 st.title("Natural Language Database Query Engine")
-st.caption("Ask questions about the Northwind database in plain English")
+st.caption("Connect your Postgres database and query it in plain English")
 
-# session initialisation 
+# --- Session state ---
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
-
 if "messages" not in st.session_state:
     st.session_state.messages = []
+if "history" not in st.session_state:
+    st.session_state.history = []
 
-#sidebar
+# --- Sidebar ---
 with st.sidebar:
+    st.header("Database")
+    db_url = st.text_input(
+        "Postgres connection string",
+        placeholder="postgresql://user:password@host:5432/dbname",
+        type="password"
+    )
+
+    st.divider()
+    st.header("LLM")
+    mode = st.radio("Inference mode", ["Cloud (Groq)", "Local (Ollama)"], index=0)
+    
+    if mode == "Cloud (Groq)":
+        api_key = st.text_input("Groq API key", type="password",
+                                 value=os.getenv("GROQ_API_KEY", ""))
+        base_url = "https://api.groq.com/openai/v1"
+        model = "openai/gpt-oss-120b"
+    else:
+        api_key = "ollama"
+        base_url = "http://localhost:11434/v1"
+        model = "qwen2.5-coder:7b"
+        st.caption("⚠️ Requires Ollama running locally on port 11434.")
+
+    st.divider()
     st.header("Session")
-    st.caption(f"Session ID: {st.session_state.session_id[:8]}...")
+    st.caption(f"ID: {st.session_state.session_id[:8]}...")
     if st.button("New conversation"):
         st.session_state.session_id = str(uuid.uuid4())
         st.session_state.messages = []
+        st.session_state.history = []
         st.rerun()
 
-    st.divider()
-    st.header("Model")
-    mode = st.radio("Inference mode", ["Local (Ollama)", "Cloud (Groq)"], index=0)
-    st.session_state.inference_mode = "ollama" if mode == "Local (Ollama)" else "groq"
-    
-    if mode == "Local (Ollama)":
-        st.caption("⚠️ Requires Ollama running locally on port 11434.")
+# --- Validate connection ---
+if not db_url:
+    st.info("👈 Enter your Postgres connection string in the sidebar to get started.")
+    st.stop()
 
+if not api_key or api_key == "":
+    st.warning("Enter your API key in the sidebar.")
+    st.stop()
 
-# session id per browser session
-if "session_id" not in st.session_state:
-    st.session_state.session_id = str(uuid.uuid4())
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# display chat history
+# --- Chat history ---
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
-        if "sql" in msg:
+        if msg.get("sql"):
             with st.expander("Generated SQL"):
                 st.code(msg["sql"], language="sql")
-        if "rows" in msg and msg["rows"]:
+        if msg.get("rows"):
             with st.expander("Results"):
-                st.dataframe(msg["rows"])
-        if "confidence" in msg:
-            st.caption(f"Confidence: {data['confidence']} · Intent: {data['intent']} · Cached: {data['cached']} · Cache type: {data.get('cache_type') or 'none'}")
-            if msg.get("warning"):
-                st.warning(msg["warning"])
+                st.dataframe(pd.DataFrame(msg["rows"], columns=msg.get("columns")))
+        if msg.get("confidence") is not None:
+            st.caption(f"Confidence: {msg['confidence']} · Intent: {msg.get('intent')}")
+        if msg.get("warning"):
+            st.warning(msg["warning"])
 
-# input
-if prompt := st.chat_input("Ask a question about the data..."):
-    # show user message
+# --- Input ---
+if prompt := st.chat_input("Ask a question about your data..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.write(prompt)
 
-    # call API
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
-                response = requests.post(
-                    f"{API_URL}/query",
-                    headers=HEADERS,
-                    json={
-                        "query": prompt,
-                        "session_id": st.session_state.session_id,
-                        "inference_mode": st.session_state.get("inference_mode", "ollama")
-                    }
+                output = run_query(
+                    user_input=prompt,
+                    db_url=db_url,
+                    api_key=api_key,
+                    model=model,
+                    base_url=base_url,
+                    history=st.session_state.history
                 )
-                data = response.json()
 
-                if data.get("error"):
-                    st.error(f"Error: {data['error']}")
+                if output.get("error"):
+                    st.error(f"Error: {output['error']}")
                     st.session_state.messages.append({
                         "role": "assistant",
-                        "content": f"Error: {data['error']}"
+                        "content": f"Error: {output['error']}"
                     })
                 else:
-                    # show results
                     st.write("Query executed successfully.")
                     with st.expander("Generated SQL", expanded=True):
-                        st.code(data["sql"], language="sql")
-                    if data["rows"]:
+                        st.code(output["sql"], language="sql")
+
+                    if output["rows"]:
                         with st.expander("Results", expanded=True):
-                            st.dataframe(data["rows"])
+                            st.dataframe(pd.DataFrame(
+                                output["rows"],
+                                columns=output.get("columns")
+                            ))
                     else:
                         st.info("Query returned no results.")
 
-                    st.caption(f"Confidence: {data['confidence']} · Intent: {data['intent']} · Cached: {data['cached']}")
-                    if data.get("warning"):
-                        st.warning(data["warning"])
+                    st.caption(f"Confidence: {output['confidence']} · Intent: {output['intent']}")
+                    if output.get("warning"):
+                        st.warning(output["warning"])
 
-                    # get explanation
-                    explain_resp = requests.post(
-                        f"{API_URL}/explain",
-                        headers=HEADERS,
-                        json={
-                            "sql": data["sql"],
-                            "inference_mode": st.session_state.get("inference_mode", "ollama")
-                        }
-                    )
-                    explanation = explain_resp.json().get("explanation", "")
+                    # explain
+                    explanation = explain_sql(output["sql"], api_key, model, base_url)
                     if explanation:
                         st.info(f"💡 {explanation}")
+
+                    # update session history
+                    st.session_state.history.append({"role": "user", "content": prompt})
+                    st.session_state.history.append({"role": "assistant", "content": output["sql"]})
 
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": "Query executed successfully.",
-                        "sql": data["sql"],
-                        "rows": data["rows"],
-                        "confidence": data["confidence"],
-                        "intent": data["intent"],
-                        "warning": data.get("warning")
+                        "sql": output["sql"],
+                        "rows": output["rows"],
+                        "columns": output.get("columns"),
+                        "confidence": output["confidence"],
+                        "intent": output["intent"],
+                        "warning": output.get("warning")
                     })
 
             except Exception as e:
-                st.error(f"Could not connect to API: {e}")
+                st.error(f"Something went wrong: {e}")
