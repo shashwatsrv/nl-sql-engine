@@ -19,17 +19,31 @@ if "history" not in st.session_state:
 
 # --- Sidebar ---
 with st.sidebar:
-    st.header("Database")
-    db_url = st.text_input(
-        "Postgres connection string",
-        placeholder="postgresql://user:password@host:5432/dbname",
-        type="password"
-    )
+    st.header("Data source")
+    source = st.radio("Connect via", ["Postgres", "CSV / XLSX"], index=0)
+
+    db_url = None
+    if source == "Postgres":
+        db_url = st.text_input(
+            "Connection string",
+            placeholder="postgresql://user:password@host:5432/dbname",
+            type="password"
+        )
+    else:
+        uploaded = st.file_uploader("Upload file", type=["csv", "xlsx"],
+                                     help="Max 10MB")
+        if uploaded:
+            if uploaded.size > 10 * 1024 * 1024:
+                st.error("File exceeds 10MB limit.")
+                st.stop()
+            from app.core import load_file_to_sqlite
+            db_url, table_name = load_file_to_sqlite(uploaded)
+            st.success(f"Loaded table: `{table_name}`")
 
     st.divider()
     st.header("LLM")
     mode = st.radio("Inference mode", ["Cloud (Groq)", "Local (Ollama)"], index=0)
-    
+
     if mode == "Cloud (Groq)":
         api_key = st.text_input("Groq API key", type="password",
                                  value=os.getenv("GROQ_API_KEY", ""))
@@ -49,7 +63,7 @@ with st.sidebar:
         st.session_state.messages = []
         st.session_state.history = []
         st.rerun()
-
+        
 # --- Validate connection ---
 if not db_url:
     st.info("👈 Enter your Postgres connection string in the sidebar to get started.")

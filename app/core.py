@@ -6,6 +6,9 @@ import sqlglot
 import os
 import re
 import numpy as np
+import sqlite3
+import pandas as pd
+import tempfile
 
 # --- Models (loaded once) ---
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
@@ -59,12 +62,11 @@ def classify_intent(query: str) -> dict:
     }
 
 # --- Validation ---
-def validate_sql(sql: str, known_tables: set) -> dict:
+def validate_sql(sql: str, known_tables: set, dialect: str = "postgres") -> dict:
     try:
-        parsed = sqlglot.parse_one(sql, dialect="postgres")
+        parsed = sqlglot.parse_one(sql, dialect=dialect)
     except sqlglot.errors.ParseError as e:
         return {"valid": False, "error": f"Syntax error: {e}"}
-
     if parsed.key.upper() in BLOCKED_OPS:
         return {"valid": False, "error": f"Operation not allowed: {parsed.key.upper()}"}
 
@@ -111,6 +113,7 @@ def run_query(
     history: list = []
 ) -> dict:
     engine = create_engine(db_url)
+    dialect = "sqlite" if "sqlite" in db_url else "postgres"
     client = OpenAI(api_key=api_key, base_url=base_url)
 
     # intent
@@ -125,12 +128,12 @@ def run_query(
 
     # build messages
     messages = [
-        {"role": "system", "content": f"""You are a PostgreSQL expert. Given this schema:
+        {"role": "system", "content": f"""You are a {dialect.upper()} expert. Given this schema:
 {schema}
 
 Query hint: {intent['hint']}
 
-Use PostgreSQL syntax only. Return only the SQL query, nothing else."""}
+Use {dialect} syntax only. Return only the SQL query, nothing else."""}
     ]
     messages.extend(history[-10:])
     messages.append({"role": "user", "content": user_input})
@@ -145,7 +148,7 @@ Use PostgreSQL syntax only. Return only the SQL query, nothing else."""}
                 "confidence": 0.0, "error": "Could not generate SQL — try rephrasing."}
 
     # validate
-    validation = validate_sql(sql, known_tables)
+    validation = validate_sql(sql, known_tables, dialect=dialect)
     if not validation["valid"]:
         return {"sql": sql, "rows": [], "intent": intent["intent"],
                 "confidence": 0.0, "error": validation["error"]}
@@ -182,3 +185,26 @@ def explain_sql(sql: str, api_key: str, model: str, base_url: str) -> str:
         ]
     )
     return response.choices[0].message.content
+
+
+
+# --- CSV file ---
+def load_file_to_sqlite(file) -> tuple[str, str]:
+    """Load CSV/XLSX into a temp SQLite DB, return (engine_url, table_name)"""
+    if file.name.endswith(".csv"):
+        df = pd.read_csv(file)
+    else:
+        df = pd.read_excel(file)
+
+    # sanitise table name from filename
+    table_name = re.sub(r'[^a-zA-Z0-9_]', '_', file.name.rsplit('.', 1)[0].lower())
+
+    # write to temp SQLite file
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    conn = sqlite3.connect(tmp.name)
+    df.to_sql(table_name, conn, if_exists="replace", index=False)
+    conn.close()
+
+    return f"sqlite:///{tmp.name}", table_name
+
+
